@@ -1,0 +1,51 @@
+name: wallapp
+description: A fridge tablet app for todo list, meal planning, and event tracking
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # UI Components
+  cupertino_icons: ^1.0.6
+  google_fonts: ^6.1.0
+
+  # State Management
+  provider: ^6.1.1
+
+  # Local Storage
+  shared_preferences: ^2.2.2
+  sqflite: ^2.3.0
+  path_provider: ^2.1.1
+
+  # Calendar
+  table_calendar: ^3.0.9
+  device_calendar: ^4.8.0
+  intl: ^0.19.0
+
+  # HTTP and AI
+  http: ^1.1.2
+  flutter_markdown: ^0.6.18
+
+  # Local LLM - using ollama or llama.cpp bindings
+  langchain: ^0.3.0
+  langchain_ollama: ^0.1.0
+
+  # Utils
+  uuid: ^4.3.3
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.1
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - assets/images/
+    - assets/fonts/
