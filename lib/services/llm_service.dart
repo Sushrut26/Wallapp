@@ -1,36 +1,81 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../models/meal.dart';
+import '../utils/input_validator.dart';
+
+class SecurityException implements Exception {
+  final String message;
+  SecurityException(this.message);
+
+  @override
+  String toString() => 'SecurityException: $message';
+}
 
 class LLMService {
   // Default Ollama endpoint running locally
   final String baseUrl;
   final String model;
+  DateTime? _lastRequestTime;
+  static const _rateLimitDuration = Duration(seconds: 2);
 
   LLMService({
     this.baseUrl = 'http://localhost:11434',
     this.model = 'llama2',
   });
 
+  /// Validate that the URL uses HTTPS if not localhost
+  bool _isSecureEndpoint(String url) {
+    final uri = Uri.parse(url);
+    return uri.scheme == 'https' ||
+           uri.host == 'localhost' ||
+           uri.host == '127.0.0.1' ||
+           uri.host.startsWith('192.168.') ||
+           uri.host.startsWith('10.');
+  }
+
   Future<String> generateMealSuggestion({
     required String category,
     required List<Meal> mealHistory,
     String? preferences,
   }) async {
-    // Build context from meal history
+    // Rate limiting to prevent abuse
+    if (_lastRequestTime != null) {
+      final timeSinceLastRequest = DateTime.now().difference(_lastRequestTime!);
+      if (timeSinceLastRequest < _rateLimitDuration) {
+        await Future.delayed(_rateLimitDuration - timeSinceLastRequest);
+      }
+    }
+    _lastRequestTime = DateTime.now();
+
+    // Validate URL security
+    if (!_isSecureEndpoint(baseUrl)) {
+      throw SecurityException('LLM endpoint must use HTTPS for remote servers');
+    }
+
+    // Sanitize inputs to prevent prompt injection
+    final sanitizedCategory = InputValidator.sanitizeForLLM(category);
+    final sanitizedPreferences = preferences != null
+        ? InputValidator.sanitizeForLLM(preferences)
+        : 'No specific preferences';
+
+    // Build context from meal history with sanitization
     final historyContext = mealHistory.isEmpty
         ? 'No previous meal history available.'
-        : 'Previous meals:\n${mealHistory.take(5).map((m) => '- ${m.name}: ${m.description}').join('\n')}';
+        : 'Previous meals:\n${mealHistory.take(5).map((m) {
+            final safeName = InputValidator.sanitizeForLLM(m.name);
+            final safeDesc = InputValidator.sanitizeForLLM(m.description);
+            return '- $safeName: $safeDesc';
+          }).join('\n')}';
 
     final prompt = '''
-You are a helpful vegetarian meal planning assistant. Generate a vegetarian meal suggestion for ${category}.
+You are a helpful vegetarian meal planning assistant. Generate a vegetarian meal suggestion for $sanitizedCategory.
 
-${historyContext}
+$historyContext
 
 Requirements:
 - Must be vegetarian (no meat, fish, or poultry)
-- Category: ${category}
-- ${preferences ?? 'No specific preferences'}
+- Category: $sanitizedCategory
+- $sanitizedPreferences
 
 Please suggest a meal with the following format:
 Name: [Meal Name]
@@ -54,13 +99,17 @@ Keep it simple and practical for home cooking.
 
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
-        return data['response'] ?? _getFallbackSuggestion(category);
+        final suggestion = data['response'] as String?;
+        if (suggestion != null && suggestion.isNotEmpty) {
+          return suggestion;
+        }
+        return _getFallbackSuggestion(sanitizedCategory);
       } else {
-        return _getFallbackSuggestion(category);
+        return _getFallbackSuggestion(sanitizedCategory);
       }
     } catch (e) {
       // If Ollama is not available, return fallback suggestions
-      return _getFallbackSuggestion(category);
+      return _getFallbackSuggestion(sanitizedCategory);
     }
   }
 

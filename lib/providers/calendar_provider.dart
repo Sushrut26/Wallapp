@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 import '../models/calendar_event.dart';
+import '../utils/input_validator.dart';
 
 class CalendarProvider extends ChangeNotifier {
   List<CalendarEvent> _events = [];
@@ -45,23 +46,42 @@ class CalendarProvider extends ChangeNotifier {
   }
 
   Future<void> _loadEvents() async {
-    final prefs = await SharedPreferences.getInstance();
-    final eventsJson = prefs.getString('events');
-    if (eventsJson != null) {
-      final List<dynamic> decoded = json.decode(eventsJson);
-      _events = decoded.map((item) => CalendarEvent.fromJson(item)).toList();
-      notifyListeners();
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final eventsJson = prefs.getString('events');
+      if (eventsJson != null && eventsJson.isNotEmpty) {
+        final List<dynamic> decoded = json.decode(eventsJson);
+        _events = decoded
+            .map((item) {
+              try {
+                return CalendarEvent.fromJson(item);
+              } catch (e) {
+                debugPrint('Error parsing event item: $e');
+                return null;
+              }
+            })
+            .whereType<CalendarEvent>()
+            .toList();
+        notifyListeners();
+      }
+    } catch (e) {
+      debugPrint('Error loading events: $e');
+      _events = [];
     }
   }
 
   Future<void> _saveEvents() async {
-    final prefs = await SharedPreferences.getInstance();
-    final eventsJson =
-        json.encode(_events.map((event) => event.toJson()).toList());
-    await prefs.setString('events', eventsJson);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final eventsJson =
+          json.encode(_events.map((event) => event.toJson()).toList());
+      await prefs.setString('events', eventsJson);
+    } catch (e) {
+      debugPrint('Error saving events: $e');
+    }
   }
 
-  Future<void> addEvent({
+  Future<bool> addEvent({
     required String title,
     required String description,
     required DateTime startTime,
@@ -70,22 +90,48 @@ class CalendarProvider extends ChangeNotifier {
     bool isAllDay = false,
     String color = 'blue',
   }) async {
+    // Validate inputs
+    final titleError = InputValidator.validateTitle(title);
+    if (titleError != null) return false;
+
+    final descError = InputValidator.validateDescription(description);
+    if (descError != null) return false;
+
+    if (location != null) {
+      final locError = InputValidator.validateLocation(location);
+      if (locError != null) return false;
+    }
+
+    if (!InputValidator.isValidDate(startTime) ||
+        !InputValidator.isValidDate(endTime)) {
+      return false;
+    }
+
+    if (endTime.isBefore(startTime)) return false;
+
+    // Sanitize inputs
+    final sanitizedTitle = InputValidator.sanitize(title);
+    final sanitizedDescription = InputValidator.sanitize(description);
+    final sanitizedLocation =
+        location != null ? InputValidator.sanitize(location) : null;
+
     final event = CalendarEvent(
       id: const Uuid().v4(),
-      title: title,
-      description: description,
+      title: sanitizedTitle,
+      description: sanitizedDescription,
       startTime: startTime,
       endTime: endTime,
-      location: location,
+      location: sanitizedLocation,
       isAllDay: isAllDay,
       color: color,
     );
     _events.add(event);
     await _saveEvents();
     notifyListeners();
+    return true;
   }
 
-  Future<void> updateEvent({
+  Future<bool> updateEvent({
     required String id,
     String? title,
     String? description,
@@ -95,20 +141,47 @@ class CalendarProvider extends ChangeNotifier {
     bool? isAllDay,
     String? color,
   }) async {
+    // Validate inputs if provided
+    if (title != null) {
+      final titleError = InputValidator.validateTitle(title);
+      if (titleError != null) return false;
+    }
+
+    if (description != null) {
+      final descError = InputValidator.validateDescription(description);
+      if (descError != null) return false;
+    }
+
+    if (location != null) {
+      final locError = InputValidator.validateLocation(location);
+      if (locError != null) return false;
+    }
+
+    if (startTime != null && !InputValidator.isValidDate(startTime)) {
+      return false;
+    }
+
+    if (endTime != null && !InputValidator.isValidDate(endTime)) {
+      return false;
+    }
+
     final index = _events.indexWhere((event) => event.id == id);
     if (index != -1) {
       _events[index] = _events[index].copyWith(
-        title: title,
-        description: description,
+        title: title != null ? InputValidator.sanitize(title) : null,
+        description:
+            description != null ? InputValidator.sanitize(description) : null,
         startTime: startTime,
         endTime: endTime,
-        location: location,
+        location: location != null ? InputValidator.sanitize(location) : null,
         isAllDay: isAllDay,
         color: color,
       );
       await _saveEvents();
       notifyListeners();
+      return true;
     }
+    return false;
   }
 
   Future<void> deleteEvent(String id) async {

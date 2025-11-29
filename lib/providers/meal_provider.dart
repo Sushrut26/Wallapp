@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 import '../models/meal.dart';
 import '../services/llm_service.dart';
+import '../utils/input_validator.dart';
 
 class MealProvider extends ChangeNotifier {
   List<Meal> _meals = [];
@@ -32,39 +33,73 @@ class MealProvider extends ChangeNotifier {
   }
 
   Future<void> _loadMeals() async {
-    final prefs = await SharedPreferences.getInstance();
-    final mealsJson = prefs.getString('meals');
-    if (mealsJson != null) {
-      final List<dynamic> decoded = json.decode(mealsJson);
-      _meals = decoded.map((item) => Meal.fromJson(item)).toList();
-      notifyListeners();
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final mealsJson = prefs.getString('meals');
+      if (mealsJson != null && mealsJson.isNotEmpty) {
+        final List<dynamic> decoded = json.decode(mealsJson);
+        _meals = decoded
+            .map((item) {
+              try {
+                return Meal.fromJson(item);
+              } catch (e) {
+                debugPrint('Error parsing meal item: $e');
+                return null;
+              }
+            })
+            .whereType<Meal>()
+            .toList();
+        notifyListeners();
+      }
+    } catch (e) {
+      debugPrint('Error loading meals: $e');
+      _meals = [];
     }
   }
 
   Future<void> _saveMeals() async {
-    final prefs = await SharedPreferences.getInstance();
-    final mealsJson = json.encode(_meals.map((meal) => meal.toJson()).toList());
-    await prefs.setString('meals', mealsJson);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final mealsJson = json.encode(_meals.map((meal) => meal.toJson()).toList());
+      await prefs.setString('meals', mealsJson);
+    } catch (e) {
+      debugPrint('Error saving meals: $e');
+    }
   }
 
-  Future<void> addMeal({
+  Future<bool> addMeal({
     required String name,
     required String description,
     required List<String> ingredients,
     required String category,
     required DateTime plannedDate,
   }) async {
+    // Validate inputs
+    final nameError = InputValidator.validateTitle(name);
+    if (nameError != null) return false;
+
+    final descError = InputValidator.validateDescription(description);
+    if (descError != null) return false;
+
+    if (!InputValidator.isValidDate(plannedDate)) return false;
+
+    // Sanitize inputs
+    final sanitizedName = InputValidator.sanitize(name);
+    final sanitizedDescription = InputValidator.sanitize(description);
+    final sanitizedIngredients = InputValidator.sanitizeIngredients(ingredients);
+
     final meal = Meal(
       id: const Uuid().v4(),
-      name: name,
-      description: description,
-      ingredients: ingredients,
+      name: sanitizedName,
+      description: sanitizedDescription,
+      ingredients: sanitizedIngredients,
       category: category,
       plannedDate: plannedDate,
     );
     _meals.add(meal);
     await _saveMeals();
     notifyListeners();
+    return true;
   }
 
   Future<void> updateMeal({

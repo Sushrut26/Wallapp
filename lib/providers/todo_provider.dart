@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 import '../models/todo_item.dart';
+import '../utils/input_validator.dart';
 
 class TodoProvider extends ChangeNotifier {
   List<TodoItem> _todos = [];
@@ -27,36 +28,70 @@ class TodoProvider extends ChangeNotifier {
   }
 
   Future<void> _loadTodos() async {
-    final prefs = await SharedPreferences.getInstance();
-    final todosJson = prefs.getString('todos');
-    if (todosJson != null) {
-      final List<dynamic> decoded = json.decode(todosJson);
-      _todos = decoded.map((item) => TodoItem.fromJson(item)).toList();
-      notifyListeners();
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final todosJson = prefs.getString('todos');
+      if (todosJson != null && todosJson.isNotEmpty) {
+        final List<dynamic> decoded = json.decode(todosJson);
+        _todos = decoded
+            .map((item) {
+              try {
+                return TodoItem.fromJson(item);
+              } catch (e) {
+                debugPrint('Error parsing todo item: $e');
+                return null;
+              }
+            })
+            .whereType<TodoItem>()
+            .toList();
+        notifyListeners();
+      }
+    } catch (e) {
+      debugPrint('Error loading todos: $e');
+      _todos = [];
     }
   }
 
   Future<void> _saveTodos() async {
-    final prefs = await SharedPreferences.getInstance();
-    final todosJson = json.encode(_todos.map((todo) => todo.toJson()).toList());
-    await prefs.setString('todos', todosJson);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final todosJson = json.encode(_todos.map((todo) => todo.toJson()).toList());
+      await prefs.setString('todos', todosJson);
+    } catch (e) {
+      debugPrint('Error saving todos: $e');
+    }
   }
 
-  Future<void> addTodo({
+  Future<bool> addTodo({
     required String title,
     required String description,
     required String familyMember,
   }) async {
+    // Validate and sanitize inputs
+    final titleError = InputValidator.validateTitle(title);
+    if (titleError != null) {
+      return false;
+    }
+
+    final descError = InputValidator.validateDescription(description);
+    if (descError != null) {
+      return false;
+    }
+
+    final sanitizedTitle = InputValidator.sanitize(title);
+    final sanitizedDescription = InputValidator.sanitize(description);
+
     final todo = TodoItem(
       id: const Uuid().v4(),
-      title: title,
-      description: description,
+      title: sanitizedTitle,
+      description: sanitizedDescription,
       familyMember: familyMember,
       createdAt: DateTime.now(),
     );
     _todos.add(todo);
     await _saveTodos();
     notifyListeners();
+    return true;
   }
 
   Future<void> toggleTodo(String id) async {
@@ -78,21 +113,34 @@ class TodoProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> updateTodo({
+  Future<bool> updateTodo({
     required String id,
     String? title,
     String? description,
     String? familyMember,
   }) async {
+    // Validate inputs if provided
+    if (title != null) {
+      final titleError = InputValidator.validateTitle(title);
+      if (titleError != null) return false;
+    }
+
+    if (description != null) {
+      final descError = InputValidator.validateDescription(description);
+      if (descError != null) return false;
+    }
+
     final index = _todos.indexWhere((todo) => todo.id == id);
     if (index != -1) {
       _todos[index] = _todos[index].copyWith(
-        title: title,
-        description: description,
+        title: title != null ? InputValidator.sanitize(title) : null,
+        description: description != null ? InputValidator.sanitize(description) : null,
         familyMember: familyMember,
       );
       await _saveTodos();
       notifyListeners();
+      return true;
     }
+    return false;
   }
 }
